@@ -50,8 +50,8 @@ c     SET UP and RUN NEKBONE
 
            call set_f(f,c,n)
 
-           if(nid.eq.0) write(6,*)
-           call cg(x,f,g,c,r,w,p,z,n,niter,flop_cg)
+c           if(nid.eq.0) write(6,*)
+c           call cg(x,f,g,c,r,w,p,z,n,niter,flop_cg)
 
            call nekgsync()
 

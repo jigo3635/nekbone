@@ -1,6 +1,6 @@
 c-----------------------------------------------------------------------
       subroutine cg(x,f,g,c,r,w,p,z,n,niter,flop_cg)
-      include 'SIZE'
+
 
 c     Solve Ax=f where A is SPD and is invoked by ax()
 c
@@ -17,13 +17,78 @@ c
 c     User-provided solveM(z,r,n) ) returns  z := M^-1 r,  
 c
 
+#ifdef XSMM
+      USE :: LIBXSMM
+      USE :: STREAM_UPDATE_KERNELS
+#endif
+
+      include 'SIZE'
+      include 'DXYZ'
       common /mymask/cmask(-1:lx1*ly1*lz1*lelt)
       parameter (lt=lx1*ly1*lz1*lelt)
-      real ur(lt),us(lt),ut(lt),wk(lt)
+      real wk(lt)
 
       real x(n),f(n),r(n),w(n),p(n),z(n),g(1),c(n)
 
       character*1 ans
+
+#ifdef XSMM
+
+      INTEGER, PARAMETER :: T = KIND(0D0)
+      REAL, PARAMETER :: alpha = 1, beta0 = 0, beta1 = 1
+      
+      REAL, allocatable, dimension(:,:,:), target :: ur, us, ut
+      REAL, allocatable, target :: dx(:,:), dxt(:,:)
+      REAL, ALLOCATABLE,TARGET,SAVE :: tm1(:,:,:), tm2(:,:,:),
+     $     tm3(:,:,:)
+
+      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3, xmm4, xmm5
+
+      DOUBLE PRECISION :: max_diff
+      INTEGER :: argc, m, n, k, routine, check
+      INTEGER(8) :: i, j, ix, iy, iz,  s, size0, size1, size, 
+     $     start, it
+      CHARACTER(32) :: argv
+      s = lelt
+      size = s
+      ALLOCATE(ur(lx1,ly1,lz1), us(lx1,ly1,lz1), ut(lx1,ly1,lz1))
+      ALLOCATE(dx(lx1,lx1), dxt(ly1,ly1))
+
+! Initialize LIBXSMM
+      CALL libxsmm_init()
+
+!  Initialize 
+      do j = 1,ly1
+         do i = 1, lx1
+            dx(i,j)  = dxm1(i,j)
+            dxt(i,j) = dxtm1(i,j)
+         enddo
+      enddo
+
+!      WRITE(*, "(A)") " Streamed... (specialized)"
+      CALL libxsmm_dispatch(xmm1,lx1,ly1*lz1,lx1,alpha=alpha,beta=beta0)
+
+      CALL libxsmm_dispatch(xmm2,lx1,ly1,ly1,alpha=alpha,beta=beta0)
+      CALL libxsmm_dispatch(xmm3,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta0)
+
+      CALL libxsmm_dispatch(xmm4,lx1,ly1,ly1,alpha=alpha,beta=beta1)
+      CALL libxsmm_dispatch(xmm5,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta1)
+
+
+      IF (libxsmm_available(xmm1).AND.libxsmm_available(xmm2) 
+     $     .AND.libxsmm_available(xmm3).AND.libxsmm_available(xmm4)
+     $     .AND.libxsmm_available(xmm5)) THEN         
+
+         ALLOCATE(tm1(lx1,ly1,lz1), tm2(lx1,ly1,lz1), tm3(lx1,ly1,lz1))
+         tm1 = 0; tm2 = 0; tm3 = 0
+         start = libxsmm_timer_tick()
+      ELSE
+         WRITE(*,*) "Could not build specialized function(s)!"
+      END IF
+
+#else
+      real ur(lt),us(lt),ut(lt)
+#endif
 
       pap = 0.0
 
@@ -51,16 +116,20 @@ c     call tester(z,r,n)
          rtz2=rtz1                                                       ! OPS
          rtz1=glsc3(r,c,z,n)   ! parallel weighted inner product r^T C z ! 3n
 
-         beta = rtz1/rtz2
-         if (iter.eq.1) beta=0.0
-         call add2s1(p,z,beta,n)                                         ! 2n
+         beta_cg = rtz1/rtz2
+         if (iter.eq.1) beta_cg=0.0
+         call add2s1(p,z,beta_cg,n)                                         ! 2n
 
+#ifdef XSMM
+         call ax_xsmm(w,p,g,ur,us,ut,wk,n)                                    ! flopa
+#else
          call ax(w,p,g,ur,us,ut,wk,n)                                    ! flopa
+#endif
          pap=glsc3(w,c,p,n)                                              ! 3n
 
-         alpha=rtz1/pap
-         alphm=-alpha
-         call add2s2(x,p,alpha,n)                                        ! 2n
+         alpha_cg=rtz1/pap
+         alphm=-alpha_cg
+         call add2s2(x,p,alpha_cg,n)                                        ! 2n
          call add2s2(r,w,alphm,n)                                        ! 2n
 
          rtr = glsc3(r,c,r,n)                                            ! 3n
@@ -68,7 +137,7 @@ c     call tester(z,r,n)
          if (iter.eq.1) rtr0  = rtr
          rnorm = sqrt(rtr)
 c        if (nid.eq.0.and.mod(iter,100).eq.0) 
-c    $      write(6,6) iter,rnorm,alpha,beta,pap
+c    $      write(6,6) iter,rnorm,alpha_cg,beta_cg,pap
     6    format('cg:',i4,1p4e12.4)
 c        if (rtr.le.rlim2) goto 1001
 
@@ -76,7 +145,17 @@ c        if (rtr.le.rlim2) goto 1001
 
  1001 continue
 
-      if (nid.eq.0) write(6,6) iter,rnorm,alpha,beta,pap
+#ifdef XSMM
+      duration = libxsmm_timer_duration(start, libxsmm_timer_tick())
+      
+      DEALLOCATE(tm1, tm2, tm3)
+      DEALLOCATE(ur, us, ut)
+
+! finalize LIBXSMM
+      CALL libxsmm_finalize()
+#endif
+
+      if (nid.eq.0) write(6,6) iter,rnorm,alpha_cg,beta_cg,pap
 
       flop_cg = flop_cg + iter*15.*n
 
@@ -367,3 +446,75 @@ c  1  format(7i7,a8)
       return
       end
 c-----------------------------------------------------------------------
+
+
+#ifdef XSMM
+c-----------------------------------------------------------------------
+      subroutine ax_xsmm(w,u,gxyz,ur,us,ut,wk,n,dx,dxt) ! Matrix-vector product: w=A*u
+
+      include 'SIZE'
+      include 'TOTAL'
+
+!      real w(nx1*ny1*nz1,nelt),u(nx1*ny1*nz1,nelt)
+      REAL, allocatable, dimension(:,:,:), target :: ur, us, ut
+      REAL, allocatable, target :: dx(:,:), dxt(:,:)
+      
+      real gxyz(2*ldim,nx1*ny1*nz1,nelt)
+
+      parameter (lt=lx1*ly1*lz1*lelt)
+      real wk(lt)
+      common /mymask/cmask(-1:lx1*ly1*lz1*lelt)
+
+      integer e
+
+      DO i = 1, melt
+C local_grad3
+         CALL libxsmm_call(xmm1,  C_LOC(dx), C_LOC(u(1,1,1,i)),
+     $        C_LOC(ur(1,1,1)))
+         DO j = 1, ly1
+            CALL libxsmm_call(xmm2, C_LOC(u(1,1,j,i)), 
+     $           C_LOC(dxt), C_LOC(us(1,1,j)))
+         END DO
+         CALL libxsmm_call(xmm3, C_LOC(u(1,1,1,i)), C_LOC(dxt),
+     $        C_LOC(ut(1,1,1)))
+         
+C local_grad3_t
+         CALL libxsmm_call(xmm1,  C_LOC(dxt), C_LOC(ur(1,1,1)),
+     $        C_LOC(w(1,1,1,i)))
+         DO j = 1, ly1
+            CALL libxsmm_call(xmm4, C_LOC(us(1,1,j)), 
+     $           C_LOC(dx), C_LOC(w(1,1,j,i)))
+         END DO
+            
+         CALL libxsmm_call(xmm5, C_LOC(ut(1,1,1)), C_LOC(dx),
+     $        C_LOC(w(1,1,1,i)))
+      END DO
+
+      return
+      end
+
+
+c-----------------------------------------------------------------------
+      SUBROUTINE performance(duration, iters, m, n, k, size)
+      DOUBLE PRECISION, INTENT(IN) :: duration
+      INTEGER, INTENT(IN)    :: m, n, k
+C      INTEGER(8), INTENT(IN) :: size
+      integer size
+      real T
+      T = 8.0
+      IF (0.LT.duration) THEN
+         WRITE(*, 2) CHAR(9), "performance:", 
+     $         (1D-9 * iters * size * m * n * k * (4*(m+n+k) - 4) / 
+     $        duration),     " GFLOPS/s"
+         WRITE(*, 2) CHAR(9), "bandwidth:  ", 
+     $        (size*m*n*k*(2)*T*iters / (duration * ISHFT(1_8, 30)))
+     $        , " GB/s"
+      END IF
+      WRITE(*, 2) CHAR(9), "duration:   ", (1D3 * duration), " ms"
+
+ 2    format(1A,A,F10.5,A)
+
+      return 
+      END
+
+#endif

@@ -164,7 +164,8 @@ case $F77comp in
                PPPO="-WF,"
                F77="${F77} -qsuppress=cmpmsg"
                ;;
-  *ftn*)        P="-r8 -Mpreprocess"
+#  *ftn*)        P="-r8 -Mpreprocess"
+  *ftn*)      P="-r8 -fpconstant -fpp"
                ;;
   *sunf*)       P="-r8const -xtypemap=real:64 -fpp"
                ;;
@@ -266,6 +267,21 @@ if [ "$USR_LIB" != "" ]; then
     USR_LFLAGS="${USR_LFLAGS} ${USR_LIB}"
 fi
 
+
+if [ "$IFSIMD" == "true" -o "$IFSIMD" == "yes" ]; then
+   IFSIMD="true"
+   IFXSMM="false"
+   PPLIST="${PPLIST} SIMD"
+   export ${IFSIMD}	     
+fi 
+
+if [ "$IFXSMM" == "true" -o "$IFXSMM" == "yes" ]; then
+   IFXSMM="true"
+   IFSIMD="false"
+   PPLIST="${PPLIST} XSMM"
+   export ${IFXSMM}	  
+fi 
+
 # tweak makefile template 
 echo "generating makefile ..."
 rm -rf makefile 2>/dev/null
@@ -312,6 +328,10 @@ else
   exit 1 
 fi
 \rm .makefile 2>/dev/null
+
+if [ "${USR_INCDIR}" != "" ]; then   
+   sed -i "/^OPT_INCDIR*/ s,$, ${USR_INCDIR}," makefile
+fi
 
 # tweak SIZE file
 if [ -f "./SIZE" ]; then
