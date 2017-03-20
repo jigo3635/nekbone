@@ -302,6 +302,15 @@ c-----------------------------------------------------------------------
          flop_cg = 0
          time0   = dnekclock()
       else
+         nxyz=nx1*ny1*nz1
+C         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
+
+#IFDEF XSMM
+         niter = 100
+         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
+         flop_a = flop_a * niter
+         flop_cg = flop_cg + niter*15.*n
+#ENDIF
         time1   = dnekclock()-time0
         if (time1.gt.0) mflops = (flop_a+flop_cg)/(1.e6*time1)
         if (nid.eq.0) then

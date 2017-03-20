@@ -24,25 +24,30 @@ c
 
       include 'SIZE'
       include 'DXYZ'
+C      include 'INPUT'
       common /mymask/cmask(-1:lx1*ly1*lz1*lelt)
       parameter (lt=lx1*ly1*lz1*lelt)
-      real wk(lt)
 
-      real x(n),f(n),r(n),w(n),p(n),z(n),g(1),c(n)
+
+      real x(n),f(n),r(n),z(n),c(n)
 
       character*1 ans
 
 #ifdef XSMM
+      real w(lx1,ly1,lz1,lelt)
+      real p(lx1,ly1,lz1,lelt)
+      real wk(lx1,ly1,lz1,lelt)
+      real g(6,lx1,ly1,lz1,lelt)
 
       INTEGER, PARAMETER :: T = KIND(0D0)
       REAL, PARAMETER :: alpha = 1, beta0 = 0, beta1 = 1
       
-      REAL, allocatable, dimension(:,:,:), target :: ur, us, ut
+      REAL, allocatable, dimension(:,:,:,:), target :: ur, us, ut
       REAL, allocatable, target :: dx(:,:), dxt(:,:)
       REAL, ALLOCATABLE,TARGET,SAVE :: tm1(:,:,:), tm2(:,:,:),
      $     tm3(:,:,:)
 
-      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3, xmm4, xmm5
+      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3
 
       DOUBLE PRECISION :: max_diff
       INTEGER :: argc, m, n, k, routine, check
@@ -51,9 +56,13 @@ c
       CHARACTER(32) :: argv
       s = lelt
       size = s
-      ALLOCATE(ur(lx1,ly1,lz1), us(lx1,ly1,lz1), ut(lx1,ly1,lz1))
+      ALLOCATE(ur(lx1,ly1,lz1,lelt))
+      ALLOCATE(us(lx1,ly1,lz1,lelt))
+      ALLOCATE(ut(lx1,ly1,lz1,lelt))
       ALLOCATE(dx(lx1,lx1), dxt(ly1,ly1))
 
+
+      lxyz = lx1*ly1*lz1
 ! Initialize LIBXSMM
       CALL libxsmm_init()
 
@@ -71,13 +80,8 @@ c
       CALL libxsmm_dispatch(xmm2,lx1,ly1,ly1,alpha=alpha,beta=beta0)
       CALL libxsmm_dispatch(xmm3,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta0)
 
-      CALL libxsmm_dispatch(xmm4,lx1,ly1,ly1,alpha=alpha,beta=beta1)
-      CALL libxsmm_dispatch(xmm5,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta1)
-
-
       IF (libxsmm_available(xmm1).AND.libxsmm_available(xmm2) 
-     $     .AND.libxsmm_available(xmm3).AND.libxsmm_available(xmm4)
-     $     .AND.libxsmm_available(xmm5)) THEN         
+     $     .AND.libxsmm_available(xmm3)) THEN
 
          ALLOCATE(tm1(lx1,ly1,lz1), tm2(lx1,ly1,lz1), tm3(lx1,ly1,lz1))
          tm1 = 0; tm2 = 0; tm3 = 0
@@ -87,7 +91,10 @@ c
       END IF
 
 #else
+      real w(n),p(n)
+      real wk(lt)
       real ur(lt),us(lt),ut(lt)
+      real g
 #endif
 
       pap = 0.0
@@ -121,7 +128,72 @@ c     call tester(z,r,n)
          call add2s1(p,z,beta_cg,n)                                         ! 2n
 
 #ifdef XSMM
-         call ax_xsmm(w,p,g,ur,us,ut,wk,n)                                    ! flopa
+C         call ax_xsmm(w,p,g,ur,us,ut,wk,n,
+C     $                dx1,dxt,xmm1,xmm2,xmm3,tm1,tm2,tm3 ) ! flopa
+
+
+C Local_grad3
+      DO e = 1, nelt
+         CALL libxsmm_call(xmm1, C_LOC(dx), C_LOC(p(1,1,1,e)),
+     $        C_LOC(tm1(1,1,1)))
+         CALL stream_vector_copy(tm1(1,1,1), ur(1,1,1,e),lxyz)
+         DO j = 1, ly1
+            CALL libxsmm_call(xmm2, C_LOC(p(1,1,j,e)), 
+     $           C_LOC(dxt), C_LOC(tm2(1,1,j)))
+         END DO
+         CALL stream_vector_copy(tm2(1,1,1),us(1,1,1,e),lxyz)
+         CALL libxsmm_call(xmm3, C_LOC(p(1,1,1,e)), C_LOC(dxt),
+     $        C_LOC(tm3(1,1,1)))
+         CALL stream_vector_copy(tm3(1,1,1),ut(1,1,1,e),lxyz)
+      ENDDO
+
+C Geometric multiplication
+      DO e = 1,nelt
+         DO k = 1,lz1
+         DO j = 1,ly1
+         DO i = 1,lx1
+            wr = g(1,i,j,k,e)*ur(i,j,k,e) + 
+     $           g(2,i,j,k,e)*us(i,j,k,e) +
+     $           g(3,i,j,k,e)*ut(i,j,k,e)
+            ws = g(2,i,j,k,e)*ur(i,j,k,e) + 
+     $           g(4,i,j,k,e)*us(i,j,k,e) +
+     $           g(5,i,j,k,e)*ut(i,j,k,e)
+            wt = g(3,i,j,k,e)*ur(i,j,k,e) +
+     $           g(5,i,j,k,e)*us(i,j,k,e) +
+     $           g(6,i,j,k,e)*ut(i,j,k,e)
+            ur(i,j,k,e) = wr
+            us(i,j,k,e) = ws
+            ut(i,j,k,e) = wt
+         ENDDO
+         ENDDO
+         ENDDO            
+      ENDDO
+                  
+C local_grad3_t
+      DO e = 1, nelt
+         CALL libxsmm_call(xmm1,  C_LOC(dxt), C_LOC(ur(1,1,1,e)),
+     $        C_LOC(tm1(1,1,1)))
+
+         CALL stream_vector_copy(tm1(1,1,1),w(1,1,1,e),lxyz)
+
+         DO j = 1, ly1
+            CALL libxsmm_call(xmm2, C_LOC(us(1,1,j,e)), 
+     $           C_LOC(dx), C_LOC(tm2(1,1,j)))
+         END DO
+         CALL stream_vector_copy(tm2(1,1,1),wk(1,1,1,e),lxyz)
+
+         CALL add2(w(1,1,1,e), wk(1,1,1,e), lxyz)
+         CALL libxsmm_call(xmm3, C_LOC(ut(1,1,1,e)), C_LOC(dx),
+     $        C_LOC(tm3(1,1,1)))
+         CALL stream_vector_copy(tm3(1,1,1),wk(1,1,1,e),lxyz)
+         CALL add2(w(1,1,1,e), wk(1,1,1,e), lxyz)
+      END DO
+
+      call dssum(w)         ! Gather-scatter operation  ! w   = QQ  w
+                                                           !            L
+      call add2s2(w,p,.1,n)   !2n
+      call maskit(w,cmask,nx1,ny1,nz1)  ! Zero out Dirichlet conditions
+
 #else
          call ax(w,p,g,ur,us,ut,wk,n)                                    ! flopa
 #endif
@@ -156,8 +228,6 @@ c        if (rtr.le.rlim2) goto 1001
 #endif
 
       if (nid.eq.0) write(6,6) iter,rnorm,alpha_cg,beta_cg,pap
-
-      flop_cg = flop_cg + iter*15.*n
 
       return
       end
@@ -448,46 +518,87 @@ c  1  format(7i7,a8)
 c-----------------------------------------------------------------------
 
 
+#if 0
 #ifdef XSMM
 c-----------------------------------------------------------------------
-      subroutine ax_xsmm(w,u,gxyz,ur,us,ut,wk,n,dx,dxt) ! Matrix-vector product: w=A*u
+      subroutine ax_xsmm(w,u,gxyz,ur,us,ut,wk,n,
+     $                   dx,dxt,xmm1,xmm2,xmm3,tm1,tm2,tm3) ! Matrix-vector product: w=A*u
 
       include 'SIZE'
       include 'TOTAL'
 
 !      real w(nx1*ny1*nz1,nelt),u(nx1*ny1*nz1,nelt)
-      REAL, allocatable, dimension(:,:,:), target :: ur, us, ut
       REAL, allocatable, target :: dx(:,:), dxt(:,:)
+
+c      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3
+
+      REAL, allocatable, dimension(:,:,:,:), target :: ur, us, ut
+      REAL, allocatable, dimension(:,:,:), target :: tm1, tm2, tm3
       
-      real gxyz(2*ldim,nx1*ny1*nz1,nelt)
+      real gxyz(2*ldim,lx1,ly1,lz1,lelt)
 
       parameter (lt=lx1*ly1*lz1*lelt)
-      real wk(lt)
+      real wk(lx1,ly1,lz1,lelt)
       common /mymask/cmask(-1:lx1*ly1*lz1*lelt)
 
-      integer e
+      integer i,j,k, e, lxyz
+      lxyz = lx1*ly1*lz1
 
-      DO i = 1, melt
-C local_grad3
-         CALL libxsmm_call(xmm1,  C_LOC(dx), C_LOC(u(1,1,1,i)),
-     $        C_LOC(ur(1,1,1)))
+C Local_grad3
+      DO e = 1, nelt
+         CALL libxsmm_call(xmm1,  C_LOC(dx), C_LOC(u(1,1,1,e)),
+     $        C_LOC(tm1(1,1,1)))
+         CALL stream_vector_copy(tm1(1,1,1), ur(1,1,1,e),lxyz)
          DO j = 1, ly1
-            CALL libxsmm_call(xmm2, C_LOC(u(1,1,j,i)), 
-     $           C_LOC(dxt), C_LOC(us(1,1,j)))
+            CALL libxsmm_call(xmm2, C_LOC(u(1,1,j,e)), 
+     $           C_LOC(dxt), C_LOC(tm2(1,1,j)))
          END DO
-         CALL libxsmm_call(xmm3, C_LOC(u(1,1,1,i)), C_LOC(dxt),
-     $        C_LOC(ut(1,1,1)))
-         
+         CALL stream_vector_copy(tm2(1,1,1),us(1,1,1,e),lxyz)
+         CALL libxsmm_call(xmm3, C_LOC(u(1,1,1,e)), C_LOC(dxt),
+     $        C_LOC(tm3(1,1,1)))
+         CALL stream_vector_copy(tm3(1,1,1),ut(1,1,1,e),lxyz)
+      ENDDO
+
+C Geometric multiplication
+      DO e = 1,nelt
+         DO k = 1,lz1
+         DO j = 1,ly1
+         DO i = 1,lx1
+            wr = gxyz(1,i,j,k,e)*ur(i,j,k,e) + 
+     $           gxyz(2,i,j,k,e)*us(i,j,k,e) +
+     $           gxyz(3,i,j,k,e)*ut(i,j,k,e)
+            ws = gxyz(2,i,j,k,e)*ur(i,j,k,e) + 
+     $           gxyz(4,i,j,k,e)*us(i,j,k,e) +
+     $           gxyz(5,i,j,k,e)*ut(i,j,k,e)
+            wt = gxyz(3,i,j,k,e)*ur(i,j,k,e) +
+     $           gxyz(5,i,j,k,e)*us(i,j,k,e) +
+     $           gxyz(6,i,j,k,e)*ut(i,j,k,e)
+            ur(i,j,k,e) = wr
+            us(i,j,k,e) = ws
+            ut(i,j,k,e) = wt
+         ENDDO
+         ENDDO
+         ENDDO            
+      ENDDO
+                  
 C local_grad3_t
-         CALL libxsmm_call(xmm1,  C_LOC(dxt), C_LOC(ur(1,1,1)),
-     $        C_LOC(w(1,1,1,i)))
+      DO e = 1, nelt
+         CALL libxsmm_call(xmm1,  C_LOC(dxt), C_LOC(ur(1,1,1,e)),
+     $        C_LOC(tm1(1,1,1)))
+
+         CALL stream_vector_copy(tm1(1,1,1),w(1,1,1,e),lxyz)
+
          DO j = 1, ly1
-            CALL libxsmm_call(xmm4, C_LOC(us(1,1,j)), 
-     $           C_LOC(dx), C_LOC(w(1,1,j,i)))
+            CALL libxsmm_call(xmm2, C_LOC(us(1,1,j,e)), 
+     $           C_LOC(dx), C_LOC(tm2(1,1,j)))
          END DO
-            
-         CALL libxsmm_call(xmm5, C_LOC(ut(1,1,1)), C_LOC(dx),
-     $        C_LOC(w(1,1,1,i)))
+         CALL stream_vector_copy(tm2(1,1,1),wk(1,1,1,e),lxyz)
+
+         CALL add2(w(1,1,1,e), wk(1,1,1,e), lxyz)
+         CALL libxsmm_call(xmm3, C_LOC(ut(1,1,1,e)), C_LOC(dx),
+     $        C_LOC(tm3(1,1,1)))
+         CALL stream_vector_copy(tm3(1,1,1),wk(1,1,1,e),lxyz)
+         CALL add2(w(1,1,1,e), wk(1,1,1,e), lxyz)
       END DO
 
       return
@@ -516,5 +627,7 @@ C      INTEGER(8), INTENT(IN) :: size
 
       return 
       END
+
+#endif
 
 #endif
