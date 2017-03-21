@@ -47,7 +47,7 @@ C      include 'INPUT'
       REAL, ALLOCATABLE,TARGET,SAVE :: tm1(:,:,:), tm2(:,:,:),
      $     tm3(:,:,:)
 
-      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3
+      TYPE(LIBXSMM_DMMFUNCTION) :: xmm1, xmm2, xmm3, xmm4, xmm5
 
       DOUBLE PRECISION :: max_diff
       INTEGER :: argc, m, n, k, routine, check
@@ -76,12 +76,14 @@ C      include 'INPUT'
 
 !      WRITE(*, "(A)") " Streamed... (specialized)"
       CALL libxsmm_dispatch(xmm1,lx1,ly1*lz1,lx1,alpha=alpha,beta=beta0)
-
       CALL libxsmm_dispatch(xmm2,lx1,ly1,ly1,alpha=alpha,beta=beta0)
       CALL libxsmm_dispatch(xmm3,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta0)
+      CALL libxsmm_dispatch(xmm4,lx1,ly1,ly1,alpha=alpha,beta=beta1)
+      CALL libxsmm_dispatch(xmm5,lx1*ly1,lz1,lz1,alpha=alpha,beta=beta1)
 
       IF (libxsmm_available(xmm1).AND.libxsmm_available(xmm2) 
-     $     .AND.libxsmm_available(xmm3)) THEN
+     $     .AND. libxsmm_available(xmm3) .AND. libxsmm_available(xmm4) 
+     $     .AND. libxsmm_available(xmm5) ) THEN
 
          ALLOCATE(tm1(lx1,ly1,lz1), tm2(lx1,ly1,lz1), tm3(lx1,ly1,lz1))
          tm1 = 0; tm2 = 0; tm3 = 0
@@ -170,15 +172,12 @@ C local_grad3_t
      $        C_LOC(tm1(1,1,1)))
 
          DO j = 1, ly1
-            CALL libxsmm_call(xmm2, C_LOC(us(1,1,j)), 
-     $           C_LOC(dx), C_LOC(tm2(1,1,j)))
+            CALL libxsmm_call(xmm4, C_LOC(us(1,1,j)), 
+     $           C_LOC(dx), C_LOC(tm1(1,1,j)))
          END DO
 
-         CALL add2(tm1(1,1,1), tm2(1,1,1), lxyz)
-         CALL libxsmm_call(xmm3, C_LOC(ut(1,1,1)), C_LOC(dx),
-     $        C_LOC(tm3(1,1,1)))
-
-         CALL add2(tm1(1,1,1), tm3(1,1,1), lxyz)
+         CALL libxsmm_call(xmm5, C_LOC(ut(1,1,1)), C_LOC(dx),
+     $        C_LOC(tm1(1,1,1)))
 
          CALL stream_vector_copy(tm1(1,1,1),w(1,1,1,e),lxyz)
 

@@ -297,6 +297,9 @@ c-----------------------------------------------------------------------
       real time0,time1
       save time0,time1
 
+	real T, bandwidth
+	T = 8.0
+
       if (iset.eq.0) then
          flop_a  = 0
          flop_cg = 0
@@ -309,6 +312,8 @@ C         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
          niter = 100
          flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
          flop_a = flop_a * niter
+ 
+         bandwidth = nelt*nxyz*(2+8)*T*niter*np
 #ENDIF
 
         time1   = dnekclock()-time0
@@ -319,12 +324,14 @@ C         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
           write(6,2) mflops*np, mflops
           write(6,3) flop_a,flop_cg
           write(6,4) time1
+	  write(6,5) bandwidth / (time1 * ISHFT(1_8, 20))
         endif
     1   format('nelt = ',i7, ', np = ', i9,', nx1 = ', i7,
      &         ', elements =', i10 )
     2   format('Tot MFlops = ', 1pe12.4, ', MFlops      = ', e12.4)
     3   format('Setup Flop = ', 1pe12.4, ', Solver Flop = ', e12.4)
     4   format('Solve Time = ', e12.4)
+    5   format('Bandwidth MB/s = ', e12.4)
       endif
 
       return
