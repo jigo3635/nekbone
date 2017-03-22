@@ -297,6 +297,10 @@ c-----------------------------------------------------------------------
       real time0,time1
       save time0,time1
 
+#IFDEF XSMM
+      common /time_xsmm/ t_xsmm0, t_xsmm1, t_xsmm2
+      real t_xsmm0, t_xsmm1, t_xsmm2
+#ENDIF
 	real T, bandwidth
 	T = 8.0
 
@@ -304,6 +308,10 @@ c-----------------------------------------------------------------------
          flop_a  = 0
          flop_cg = 0
          time0   = dnekclock()
+#IFDEF XSMM
+         t_xsmm2 = 0
+#ENDIF
+
       else
          nxyz=nx1*ny1*nz1
 C         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
@@ -324,14 +332,16 @@ C         flop_a = flop_a + (19*nxyz+12*nx1*nxyz)*nelt
           write(6,2) mflops*np, mflops
           write(6,3) flop_a,flop_cg
           write(6,4) time1
-	  write(6,5) bandwidth / (time1 * ISHFT(1_8, 20))
+!	  write(6,5) bandwidth / (time1 * ISHFT(1_8, 20))
+	  write(6,5) t_xsmm2, bandwidth / (t_xsmm2 * ISHFT(1_8, 20))
+
         endif
     1   format('nelt = ',i7, ', np = ', i9,', nx1 = ', i7,
      &         ', elements =', i10 )
     2   format('Tot MFlops = ', 1pe12.4, ', MFlops      = ', e12.4)
     3   format('Setup Flop = ', 1pe12.4, ', Solver Flop = ', e12.4)
     4   format('Solve Time = ', e12.4)
-    5   format('Bandwidth MB/s = ', e12.4)
+    5   format('Libxsmm time = ',e12.4,',  Bandwidth MB/s = ', e12.4)
       endif
 
       return

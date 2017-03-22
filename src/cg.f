@@ -34,6 +34,8 @@ C      include 'INPUT'
       character*1 ans
 
 #ifdef XSMM
+      common /time_xsmm/ t_xsmm0, t_xsmm1, t_xsmm2
+
       real w(lx1,ly1,lz1,lelt)
       real p(lx1,ly1,lz1,lelt)
       real wk(lx1,ly1,lz1,lelt)
@@ -133,7 +135,9 @@ c     call tester(z,r,n)
 C         call ax_xsmm(w,p,g,ur,us,ut,wk,n,
 C     $                dx1,dxt,xmm1,xmm2,xmm3,tm1,tm2,tm3 ) ! flopa
 
-
+      ! Set timer
+      t_xsmm0 = dnekclock()
+ 
 C Local_grad3
       DO e = 1, nelt
          CALL libxsmm_call(xmm1, C_LOC(dx), C_LOC(p(1,1,1,e)),
@@ -182,6 +186,9 @@ C local_grad3_t
          CALL stream_vector_copy(tm1(1,1,1),w(1,1,1,e),lxyz)
 
       END DO
+
+      t_xsmm1 = dnekclock()-t_xsmm0
+      t_xsmm2 = t_xsmm2 + t_xsmm1
 
       call dssum(w)         ! Gather-scatter operation  ! w   = QQ  w
                                                            !            L
